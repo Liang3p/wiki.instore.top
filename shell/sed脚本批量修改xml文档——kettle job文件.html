@@ -1,0 +1,90 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <link rel="Stylesheet" type="text/css" href="/static/css/style.css">
+    <link rel="Stylesheet" type="text/css" href="/static/css/tango.css">
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="alternate" type="application/atom+xml" href="atom.xml" title="Atom feed">
+    <title>sed脚本批量修改xml文档——kettle job文件 - Wiki Pages</title>
+    <meta name="keywords" content="bigdata hadoop hive datawarehouse spark ML"/>
+    <meta name="description" content="wiki page"/>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  </head>
+
+  <body>
+    <div id="container">
+      
+<div id="header">
+  <div class="post-nav"><a href="/">Home</a>&nbsp;&#187;&nbsp;<a href="/#shell">shell</a>&nbsp;&#187;&nbsp;sed脚本批量修改xml文档——kettle job文件
+    <span class="updated">Page Updated&nbsp;
+      2018-03-09 23:16
+    </span></div>
+</div>
+<div class="clearfix"></div>
+
+<div class="page_title">sed脚本批量修改xml文档——kettle job文件</div>
+
+  <h2 id="_1">背景描述</h2>
+<p>项目中使用到kettle作为ETL调度工具,在Job中内嵌了HiveQL以实现实际的数据处理任务. 通常,为方便YARN监控资源使用情况,会在HiveQL首行设置<code>mapred.job.name</code>变量, 由于疏忽或未遵循开发规范等原因,难免还有少数Job遗漏该设置.</p>
+<div class="toc"><span class="toctitle">Table of Contents</span><ul>
+<li><a href="#_1">背景描述</a></li>
+<li><a href="#_2">问题分析</a></li>
+<li><a href="#_3">解决方案</a><ul>
+<li><a href="#_4">准备</a></li>
+<li><a href="#sed">sed脚本</a></li>
+<li><a href="#_5">查找已修改</a></li>
+<li><a href="#_6">验证文件有效性</a></li>
+<li><a href="#yarn">跟踪YARN资源监控</a></li>
+</ul>
+</li>
+</ul>
+</div>
+<h2 id="_2">问题分析</h2>
+<p>手工检查仍然是最有效的方式之一. 但是遍历整个kettle文件仓库来实现每个作业的检查又将耗费大量人力和时间, 但如果采用捕捉YARN监控这种被动发掘的方式,又将在资源和性能上做出妥协.<br />
+kettle文件实际为XML文档,因此可以通过文本批处理实现追加设置的目的.</p>
+<h2 id="_3">解决方案</h2>
+<h3 id="_4">准备</h3>
+<p>修改kettle作业文件(job*.kjb),sql节点首行增加mapred.job.name设置<br />
+<code>Set mapred.job.name=${Internal.Job.Name}:TO_DW;</code></p>
+<h3 id="sed">sed脚本</h3>
+<div class="hlcode"><pre><span class="c"># 查找当前目录下所有kjb文件,在&lt;sql&gt;标签内首行增加设置</span>
+find . -name <span class="s2">&quot;job*.kjb&quot;</span> | xargs sed -i <span class="s2">&quot;s/&lt;sql&gt;\(.*\)&lt;\/sql&gt;/&lt;sql&gt;set mapred.job.name\&amp;#x3d;\&amp;#x24;\&amp;#x7b;Internal.Job.Name\&amp;#x7d;\&amp;#x3a;TO_DW\&amp;#x3b;\&amp;#xd;\&amp;#xa;\1&lt;\/sql&gt;/g&quot;</span>
+</pre></div>
+
+
+<ul>
+<li>sed替换<br />
+<img alt="" src="http://ww1.sinaimg.cn/large/a92183f7gy1fp70owp13yj20un0iawge.jpg" /></li>
+</ul>
+<h3 id="_5">查找已修改</h3>
+<div class="hlcode"><pre><span class="c"># 查找已修改的内容</span>
+find . -name <span class="s2">&quot;job*.kjb&quot;</span> | xargs grep --color<span class="o">=</span>auto -C3 <span class="s1">&#39;set mapred.job.name\&amp;#x3d;\&amp;#x24;\&amp;#x7b;Internal.Job.Name\&amp;#x7d;\&amp;#x3a;TO_DW\&amp;#x3b;\&amp;#xd;\&amp;#xa;&#39;</span>
+</pre></div>
+
+
+<ul>
+<li>查找已修改的内容<br />
+<img alt="" src="http://ww1.sinaimg.cn/large/a92183f7gy1fp70pv1vb4j20un0u0tcl.jpg" /></li>
+</ul>
+<h3 id="_6">验证文件有效性</h3>
+<p>在kettle中打开处理后的文件,可以看到,已被正确插入到<sql/>标签内的首行:<br />
+- 验证kjb文件<br />
+<img alt="" src="http://ww1.sinaimg.cn/large/a92183f7gy1fp70nrh8skj20q80glq59.jpg" /></p>
+<h3 id="yarn">跟踪YARN资源监控</h3>
+<p>运行kettle作业,查看HiveQL运行消耗资源情况:<br />
+- 正确设置的作业信息<br />
+<img alt="" src="http://ww1.sinaimg.cn/large/a92183f7gy1fp70q8ncswj20rj0gan2g.jpg" /></p>
+    </div>
+    <div id="footer">
+      <span>
+        <p>Copyright © 2018 instore.top.
+        Powered by <a href="http://simiki.org/" target="_blank">Simiki</a>.</p>
+        <p>Site Generated 2018-03-10 00:48:15</p>
+      </span>
+    </div>
+
+    
+    
+  </body>
+</html>
