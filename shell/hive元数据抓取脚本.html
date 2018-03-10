@@ -1,0 +1,398 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <link rel="Stylesheet" type="text/css" href="/static/css/style.css">
+    <link rel="Stylesheet" type="text/css" href="/static/css/tango.css">
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="alternate" type="application/atom+xml" href="atom.xml" title="Atom feed">
+    <title>hive元数据抓取脚本 - Wiki Pages</title>
+    <meta name="keywords" content="bigdata hadoop hive datawarehouse spark ML"/>
+    <meta name="description" content="wiki page"/>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  </head>
+
+  <body>
+    <div id="container">
+      
+<div id="header">
+  <div class="post-nav"><a href="/">Home</a>&nbsp;&#187;&nbsp;<a href="/#shell">shell</a>&nbsp;&#187;&nbsp;hive元数据抓取脚本
+    <span class="updated">Page Updated&nbsp;
+      2017-10-25 11:32
+    </span></div>
+</div>
+<div class="clearfix"></div>
+
+<div class="page_title">hive元数据抓取脚本</div>
+
+  <h2 id="_1">背景描述</h2>
+<p>项目中使用hive构建离线数据仓库,使用美云的元数据管理工具,建表和业务元数据维护都比较麻烦,不支持导入模型,需要逐字段填写,开发效率缓慢. 逻辑模型无法直接落地, 因此在实际开发中,建表通过Hue或者Hive-cli完成. 这也是依赖主动写入并维护的元数据管理工具最大的弊端. </p>
+<p>业务和开发难以了解企业现存的数据资产,元数据未能提供相应的服务能力. 从而导致开发人员仅了解自己接触过的数据,元数据管理人员缺乏对主体域-表-字段-业务元数据的全局视角.</p>
+<p>利用现有工具快速梳理现存数据资产成为解决方案之一.</p>
+<div class="toc"><span class="toctitle">Table of Contents</span><ul>
+<li><a href="#_1">背景描述</a></li>
+<li><a href="#_2">问题分析</a></li>
+<li><a href="#_3">抓取脚本</a></li>
+<li><a href="#merge">Merge新旧文档</a></li>
+</ul>
+</div>
+<h2 id="_2">问题分析</h2>
+<p>Hive的Meta-Store有三种配置方式:内嵌Derby、本地MySQL、远端MySQL.项目使用的是远端MySQL的方式.连接该MySQL数据库即可访问元数据信息. 另外, 也可以通过shell脚本进行抓取,形成Markdown文档.</p>
+<h2 id="_3">抓取脚本</h2>
+<p>首先更新hdfs表信息,遍历hdfs文件目录以获取表名.</p>
+<table class="hlcodetable"><tr><td class="linenos"><div class="linenodiv"><pre> 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12</pre></div></td><td class="code"><div class="hlcode"><pre><span class="c">#!/bin/bash</span>
+rm hdfs_dw_dir.txt;
+
+<span class="k">for </span>ln in <span class="sb">`</span>hdfs dfs -ls /warehouse/dw/ | awk <span class="s1">&#39;{print $8}&#39;</span><span class="sb">`</span>;
+<span class="k">do</span>
+<span class="k">    </span>hdfs dfs -ls <span class="nv">$ln</span> | awk <span class="s1">&#39;{print $8}&#39;</span> &gt;&gt; hdfs_dw_dir.txt
+<span class="k">done</span>
+
+<span class="k">for </span>hdfs_path in <span class="sb">`</span>sed <span class="s1">&#39;/^$/d&#39;</span> hdfs_dw_dir.txt<span class="sb">`</span>;
+<span class="k">do</span>
+<span class="k">    </span>nohup ./markdown_metadata.sh <span class="nv">$hdfs_path</span>
+<span class="k">done</span>
+</pre></div>
+</td></tr></table>
+
+<p>抓取元数据</p>
+<div class="hlcode"><pre><span class="c">#!/bin/bash</span>
+<span class="c"># nohup ./markdown_metadata.sh /warehouse/dw/catg/catg_goods_rp_flag_fct</span>
+<span class="nv">helpMsg</span><span class="o">=</span><span class="s2">&quot;Metadata extractor\nExtract metadata in Hive Warehouse(schema name: DW) &amp; write into markdown file.\nUsage:\n\tnohup ./markdown_metadata.sh PATH\n\tnohup ./markdown_metadata.sh /warehouse/dw/catg/catg_goods_rp_flag_fct&quot;</span>
+<span class="k">if</span> <span class="o">[</span> <span class="nv">$# </span>-ne 1 <span class="o">]</span>;<span class="k">then</span>
+<span class="nb">echo</span> -e <span class="s2">&quot;$helpMsg&quot;</span>
+<span class="nb">exit </span>1
+<span class="k">fi</span>
+<span class="nv">TABLE_PATH</span><span class="o">=</span><span class="nv">$1</span>
+<span class="nv">TABLE_NAME</span><span class="o">=</span><span class="sb">`</span><span class="nb">echo</span> <span class="nv">$TABLE_PATH</span> | sed <span class="s1">&#39;s/\/warehouse\///g;s/\/[a-z]*\//./g&#39;</span><span class="sb">`</span>
+<span class="nv">markdown_file_name</span><span class="o">=</span><span class="s2">&quot;./../doc/&quot;</span><span class="nv">$TABLE_NAME</span><span class="s2">&quot;.md&quot;</span>
+rm -rf <span class="nv">$markdown_file_name</span>
+<span class="nv">impala_host</span><span class="o">=</span><span class="s2">&quot;127.0.0.1&quot;</span>
+<span class="nb">echo</span> -e <span class="s2">&quot;\n### 实体定义&quot;</span> &gt;&gt; <span class="nv">$markdown_file_name</span>
+hive -e <span class="s2">&quot;desc $TABLE_NAME;&quot;</span> | awk <span class="s1">&#39;length($0)&gt;4 {print &quot;|&quot;$1&quot;|&quot;$2&quot;|&quot;$3&quot;|&quot;}&#39;</span> | sed 1i<span class="s2">&quot;|col_name|data_type|comment|\n|:-|:-:|:-|&quot;</span> &gt;&gt; <span class="nv">$markdown_file_name</span>
+
+<span class="nb">echo</span> -e <span class="s2">&quot;\n### 元数据&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+hive -e <span class="s2">&quot;describe formatted $TABLE_NAME;&quot;</span> | sed -n <span class="s1">&#39;/Database:/,$p&#39;</span> | awk <span class="s1">&#39;!/(Storage|WARN)/{print &quot;- &quot;$0}&#39;</span> | sed <span class="s1">&#39;s/- \t/\t&gt; /g;s/[ \t]*$//g;s/:/ /g;s/ \t/ \t:/g;s/[Eet]\t/\t:/g;s/hdfs /hdfs:/g;s/ $//g&#39;</span> &gt;&gt; <span class="nv">$markdown_file_name</span>
+
+<span class="nv">Chinese_name</span><span class="o">=</span><span class="sb">`</span>grep <span class="s1">&#39; *&gt; comment *&#39;</span> <span class="nv">$markdown_file_name</span> | awk -F: <span class="s1">&#39;{print $2}&#39;</span><span class="sb">`</span>
+<span class="nv">header</span><span class="o">=</span><span class="sb">`</span><span class="nb">echo</span> -e <span class="s2">&quot;\n## &quot;</span><span class="nv">$TABLE_NAME</span><span class="s2">&quot;($Chinese_name)&quot;</span> | tr <span class="s1">&#39;[a-z]&#39;</span> <span class="s1">&#39;[A-Z]&#39;</span><span class="sb">`</span>
+sed -i <span class="s1">&#39;1i\&#39;&quot;${header}&quot;&#39;&#39; $markdown_file_name</span>
+<span class="s1">sed -i &#39;</span>s/^ *//g<span class="s1">&#39; $markdown_file_name</span>
+
+<span class="s1">echo -e &quot;\n### 存量数据&quot; &gt;&gt; $markdown_file_name</span>
+<span class="s1">hdfs dfs -du $TABLE_PATH | grep -P /sdt=[0-9]{8} | awk &#39;</span><span class="o">{</span>split<span class="o">(</span><span class="s2">&quot;Byte:KB:MB:GB:TB:PB:EB:ZB&quot;</span>,nm,/:/<span class="o">)}</span>
+func byte2human<span class="o">(</span>bt,nm,idx<span class="o">){</span><span class="k">return </span>bt&lt;1024?bt<span class="s2">&quot; &quot;</span>nm<span class="o">[</span>idx<span class="o">]</span>:byte2human<span class="o">(</span>bt/1024,nm,idx+1<span class="o">)}</span>
+BEGIN <span class="o">{</span><span class="nv">min</span><span class="o">=</span>99991231;max<span class="o">=</span>-99991231<span class="o">}</span>
+<span class="o">{</span>sum+<span class="o">=</span><span class="nv">$1</span>;<span class="k">if</span> <span class="o">(</span><span class="nv">$3</span>&lt;min<span class="o">)</span> <span class="nv">min</span><span class="o">=</span><span class="nv">$3</span> <span class="k">fi</span>;<span class="k">if</span> <span class="o">(</span><span class="nv">$3</span>&gt;max<span class="o">)</span> <span class="nv">max</span><span class="o">=</span><span class="nv">$3</span> <span class="k">fi</span><span class="o">}</span>
+END <span class="o">{</span>split<span class="o">(</span>max,mx,<span class="s2">&quot;=&quot;</span><span class="o">)</span>; print <span class="s2">&quot;- **数据存量**:&quot;</span>, min,<span class="s2">&quot;~&quot;</span>, mx<span class="o">[</span>2<span class="o">]</span>,
+<span class="s2">&quot;\n- **周期数据增量**: &quot;</span>, byte2human<span class="o">(</span>sum/NR,nm,1<span class="o">)}</span><span class="s1">&#39;  &gt;&gt; $markdown_file_name</span>
+
+<span class="s1">impala-shell &lt;&lt; EOF | sed -n &#39;</span>10,10p<span class="s1">&#39; | sed &quot;s/[^0-9]//g;s/^/- **近30日平均记录数**: /g&quot; &gt;&gt; $markdown_file_name</span>
+<span class="s1">connect $impala_host;</span>
+<span class="s1">select ceil(sum(cnt)/count(sdt)) as avg_rec</span>
+<span class="s1">from(</span>
+<span class="s1">select sdt,count(*) as cnt</span>
+<span class="s1">from $TABLE_NAME</span>
+<span class="s1">where sdt &gt;= from_timestamp(date_sub(current_timestamp(),40),&#39;</span>yyyyMMdd<span class="s1">&#39;)</span>
+<span class="s1">group by sdt order by sdt desc limit 30</span>
+<span class="s1">)x;</span>
+<span class="s1">EOF</span>
+
+<span class="s1">echo &quot;- **文件统计**&quot;  &gt;&gt; $markdown_file_name</span>
+<span class="s1">echo &quot;&gt; 统计日期: &quot;`date +&#39;</span>%F %T.%N %A<span class="s1">&#39;`  &gt;&gt; $markdown_file_name</span>
+<span class="s1">hdfs dfs -du $TABLE_PATH | awk &#39;</span><span class="o">{</span>split<span class="o">(</span><span class="s2">&quot;Byte:KB:MB:GB:TB:PB:EB:ZB&quot;</span>,nm,/:/<span class="o">)}</span>
+func byte2human<span class="o">(</span>bt,nm,idx<span class="o">){</span>
+<span class="k">return </span>bt&lt;1024?bt<span class="s2">&quot; &quot;</span>nm<span class="o">[</span>idx<span class="o">]</span>:byte2human<span class="o">(</span>bt/1024,nm,idx+1<span class="o">)}</span>
+<span class="o">{</span>sum+<span class="o">=</span><span class="nv">$1</span><span class="o">}</span> END <span class="o">{</span>print <span class="s2">&quot;&gt; &quot;</span>,<span class="nv">$3</span>,<span class="s2">&quot;----TotalSize:&quot;</span>,byte2human<span class="o">(</span>sum,nm,1<span class="o">)</span>,<span class="s2">&quot;,目录:&quot;</span>,NR<span class="o">}</span><span class="s1">&#39; | sed &#39;</span>s/<span class="se">\/</span><span class="nv">sdt</span><span class="o">=[</span>0-9<span class="o">]</span>*//g;s/<span class="se">\/</span><span class="nv">smonth</span><span class="o">=[</span>0-9<span class="o">]</span>*//g<span class="s1">&#39;  &gt;&gt; $markdown_file_name</span>
+<span class="s1">echo -e &quot;\n- impala分区统计:&quot; &gt;&gt; $markdown_file_name</span>
+<span class="s1">#impala-shell &lt;&lt; EOF | sed &#39;</span>16,20P;1,18N;N;D<span class="s1">&#39; | sed &#39;</span>s/+/|/g<span class="s1">&#39; | head -11 &gt;&gt; $markdown_file_name</span>
+<span class="s1">impala-shell &lt;&lt; EOF | grep -A 100000 &#39;</span><span class="c">#Rows *| #Files *&#39; | sed &#39;1,4P;1,18N;N;D&#39; | head -10 | sed &#39;s/+/|/g&#39; | awk &#39;NR&lt;=2{print $0};/^\| [0-9T]/ &amp;&amp; NR&gt;2 {print $0}&#39; &gt;&gt; $markdown_file_name</span>
+connect <span class="nv">$impala_host</span>;
+show partitions <span class="nv">$TABLE_NAME</span>;
+EOF
+
+
+<span class="nb">echo</span> -e <span class="s2">&quot;\n### ETL\n&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+<span class="nv">subject</span><span class="o">=</span><span class="sb">`</span><span class="nb">echo</span> <span class="nv">$TABLE_NAME</span> | grep -Po <span class="s2">&quot;(?&lt;=\.)[a-zA-Z]*(?=_)&quot;</span> | tr <span class="o">[</span>a-z<span class="o">]</span> <span class="o">[</span>A-Z<span class="o">]</span><span class="sb">`</span>
+<span class="nb">echo</span> -e <span class="s2">&quot;- 主题: $subject&quot;</span>   &gt;&gt; <span class="nv">$markdown_file_name</span>
+<span class="nv">TARGET_TABLE_NAME</span><span class="o">=</span><span class="sb">`</span><span class="nb">echo</span> <span class="nv">$TABLE_NAME</span> | cut -d<span class="s2">&quot;.&quot;</span> -f2 | tr <span class="o">[</span>A-Z<span class="o">]</span> <span class="o">[</span>a-z<span class="o">]</span><span class="sb">`</span>
+hive -e <span class="s2">&quot;select * from TEMP.TECH_METADATA_ETL_JOBS_OVERVIEW where lower(TARGET_TABLES) like &#39;%$TARGET_TABLE_NAME%&#39; order by 0.4*length(regexp_replace(lower(job_name),concat(&#39;dw_&#39;,&#39;$TARGET_TABLE_NAME&#39;),&#39;&#39;)) + 0.6*length(regexp_replace(lower(TARGET_TABLES),concat(&#39;dw_&#39;,&#39;$TARGET_TABLE_NAME&#39;),&#39;&#39;)) limit 1;&quot;</span> | awk -F<span class="s1">&#39;\t&#39;</span> <span class="se">\</span>
+<span class="s1">&#39;{print &quot;- 源表:\n&gt; &quot;$3&quot;\n\n- 目标表：\n&gt; &quot;$4&quot;\n\n- CRON表达式: `&quot;$9&quot;`\n- KETTLE作业: &quot;$1&quot;\n- SVN文件: &quot;$2&quot;\n- 调度系统作业组: &quot;$7}&#39;</span> | <span class="se">\</span>
+sed <span class="s2">&quot;s/&#39;, &#39;/\n&gt; /g;s/&#39;//g&quot;</span> &gt;&gt; <span class="nv">$markdown_file_name</span>
+
+<span class="nb">echo</span> -e <span class="s2">&quot;\n### 数据口径&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+<span class="nb">echo</span> -e <span class="s2">&quot;#### 数据字典&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+<span class="nb">echo</span> -e <span class="s2">&quot;RP处理方式\n- R:退货\n- P:促销&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+
+<span class="c">#awk -F&#39;\t&#39; &#39;{print &quot;JOB_NAME:&quot;$1&quot;\nSERVER_FILE:&quot;$2&quot;\nSOURCE_TABLES:&quot;$3&quot;\nTARGET_TABLES&quot;$4&quot;\nJOB_ID:&quot;$5&quot;\nGROUP_ID:&quot;$6&quot;\nG_NAME:&quot;$7&quot;\nDESC:&quot;$8&quot;\nCRON:&quot;$9&quot;\nDATE:&quot;$10}&#39; hive_tech_metadata.log</span>
+
+<span class="nb">echo</span> -e <span class="s2">&quot;\n#### 常用统计&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+<span class="nb">echo</span> -e <span class="s2">&quot;\`\`\`sql&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+<span class="nb">echo</span> -e <span class="s2">&quot;hive&gt;--统计促销销售&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+<span class="nb">echo</span> -e <span class="s2">&quot;hive&gt;SELECT STATEMENT;&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+<span class="nb">echo</span> -e <span class="s2">&quot;hive&gt;&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+<span class="nb">echo</span> -e <span class="s2">&quot;\`\`\`&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+
+<span class="nb">echo</span> -e <span class="s2">&quot;\n#### 参照完整性约束&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+<span class="nb">echo</span> -e <span class="s2">&quot;1. SHOP_ID - DIM.DIM_SHOP.SHOP_ID (FK)\n2. GOODSID - DIM.DIM_GOODS.GOODSID (FK)\n&quot;</span>  &gt;&gt; <span class="nv">$markdown_file_name</span>
+</pre></div>
+
+
+<p>运行以上脚本,将生成如下内容(示例——):</p>
+<div class="hlcode"><pre><span class="c1">## DW.SALE_CITY_CATG_NIELSEN_WEK(周城市销售表-尼尔森)</span>
+
+<span class="s-Atom">###</span> <span class="s-Atom">实体定义</span>
+<span class="p">|</span><span class="s-Atom">col_name</span><span class="p">|</span><span class="s-Atom">data_type</span><span class="p">|</span><span class="s-Atom">comment</span><span class="p">|</span>
+<span class="p">|:-|:-</span><span class="s-Atom">:</span><span class="p">|:-|</span>
+<span class="p">|</span><span class="s-Atom">city_name</span><span class="p">|</span><span class="s-Atom">string</span><span class="p">|</span><span class="s-Atom">城市</span><span class="p">|</span>
+<span class="p">|</span><span class="s-Atom">nielsen_catg</span><span class="p">|</span><span class="s-Atom">string</span><span class="p">|</span><span class="s-Atom">尼尔森类别</span><span class="p">|</span>
+<span class="p">|</span><span class="s-Atom">calweek</span><span class="p">|</span><span class="s-Atom">string</span><span class="p">|</span><span class="s-Atom">星期</span><span class="p">|</span>
+<span class="p">|</span><span class="s-Atom">mkt_sales_amt</span><span class="p">|</span><span class="nf">decimal</span><span class="p">(</span><span class="m">30</span><span class="p">,</span><span class="m">8</span><span class="p">)|</span><span class="s-Atom">市场销售</span><span class="p">|</span>
+<span class="p">|</span><span class="s-Atom">sales_amt</span><span class="p">|</span><span class="nf">decimal</span><span class="p">(</span><span class="m">30</span><span class="p">,</span><span class="m">8</span><span class="p">)|</span><span class="s-Atom">自营销售</span><span class="p">|</span>
+<span class="p">|</span><span class="s-Atom">sales_share_rate</span><span class="p">|</span><span class="nf">decimal</span><span class="p">(</span><span class="m">30</span><span class="p">,</span><span class="m">8</span><span class="p">)|</span><span class="s-Atom">自营销售占比</span><span class="p">|</span>
+<span class="p">|</span><span class="s-Atom">insert_time</span><span class="p">|</span><span class="s-Atom">string</span><span class="p">|</span><span class="s-Atom">插入时间</span><span class="p">|</span>
+<span class="p">|</span><span class="s-Atom">sdt</span><span class="p">|</span><span class="s-Atom">string</span><span class="p">|</span><span class="s-Atom">主分区-日期</span><span class="p">|</span>
+<span class="p">|</span><span class="s-Atom">#</span><span class="p">|</span><span class="nv">Partition</span><span class="p">|</span><span class="nv">Information</span><span class="p">|</span>
+<span class="p">|</span><span class="s-Atom">#</span><span class="p">|</span><span class="s-Atom">col_name</span><span class="p">|</span><span class="s-Atom">data_type</span><span class="p">|</span>
+<span class="p">|</span><span class="s-Atom">sdt</span><span class="p">|</span><span class="s-Atom">string</span><span class="p">|</span><span class="s-Atom">主分区-日期</span><span class="p">|</span>
+
+<span class="s-Atom">###</span> <span class="s-Atom">元数据</span>
+<span class="o">-</span> <span class="nv">Database</span>              <span class="s-Atom">:dw</span>
+<span class="o">-</span> <span class="nv">Owner</span>                 <span class="s-Atom">:etl</span>
+<span class="o">-</span> <span class="nv">CreateTime</span>            <span class="s-Atom">:</span><span class="nv">Fri</span> <span class="nv">Jun</span> <span class="m">23</span> <span class="m">10</span> <span class="m">47</span> <span class="m">16</span> <span class="nv">CST</span> <span class="m">2017</span>
+<span class="o">-</span> <span class="nv">LastAccessTime</span>        <span class="s-Atom">:</span><span class="nv">UNKNOWN</span>
+<span class="o">-</span> <span class="nv">Protect</span> <span class="nv">Mode</span>          <span class="s-Atom">:</span><span class="nv">None</span>
+<span class="o">-</span> <span class="nv">Retention</span>             <span class="s-Atom">:</span><span class="m">0</span>
+<span class="o">-</span> <span class="nv">Location</span>              <span class="s-Atom">:</span><span class="nn">hdfs</span><span class="p">:</span><span class="o">//</span><span class="s-Atom">nameservice1</span><span class="o">/</span><span class="s-Atom">warehouse</span><span class="o">/</span><span class="s-Atom">dw</span><span class="o">/</span><span class="s-Atom">sale</span><span class="o">/</span><span class="s-Atom">sale_city_catg_nielsen_wek</span>
+<span class="o">-</span> <span class="nv">Table</span> <span class="nv">Type</span>            <span class="s-Atom">:</span><span class="nv">EXTERNAL_TABLE</span>
+<span class="o">-</span> <span class="nv">Table</span> <span class="nv">Parameters</span>
+    <span class="o">&gt;</span> <span class="nv">EXTERNAL</span>              <span class="s-Atom">:</span><span class="nv">TRUE</span>
+    <span class="o">&gt;</span> <span class="s-Atom">comment</span>               <span class="s-Atom">:周城市销售表-尼尔森</span>
+    <span class="o">&gt;</span> <span class="s-Atom">transient_lastDdlTim</span>  <span class="s-Atom">:</span><span class="m">1498186036</span>
+    <span class="o">&gt;</span>
+<span class="o">-</span> <span class="nv">SerDe</span> <span class="nv">Library</span>         <span class="s-Atom">:org</span><span class="p">.</span><span class="s-Atom">apache</span><span class="p">.</span><span class="s-Atom">hadoop</span><span class="p">.</span><span class="s-Atom">hive</span><span class="p">.</span><span class="s-Atom">ql</span><span class="p">.</span><span class="s-Atom">io</span><span class="p">.</span><span class="s-Atom">parquet</span><span class="p">.</span><span class="s-Atom">serde</span><span class="p">.</span><span class="nv">ParquetHiveSerDe</span>
+<span class="o">-</span> <span class="nv">InputFormat</span>           <span class="s-Atom">:org</span><span class="p">.</span><span class="s-Atom">apache</span><span class="p">.</span><span class="s-Atom">hadoop</span><span class="p">.</span><span class="s-Atom">hive</span><span class="p">.</span><span class="s-Atom">ql</span><span class="p">.</span><span class="s-Atom">io</span><span class="p">.</span><span class="s-Atom">parquet</span><span class="p">.</span><span class="nv">MapredParquetInputFormat</span>
+<span class="o">-</span> <span class="nv">OutputFormat</span>          <span class="s-Atom">:org</span><span class="p">.</span><span class="s-Atom">apache</span><span class="p">.</span><span class="s-Atom">hadoop</span><span class="p">.</span><span class="s-Atom">hive</span><span class="p">.</span><span class="s-Atom">ql</span><span class="p">.</span><span class="s-Atom">io</span><span class="p">.</span><span class="s-Atom">parquet</span><span class="p">.</span><span class="nv">MapredParquetOutputFormat</span>
+<span class="o">-</span> <span class="nv">Compressed</span>            <span class="s-Atom">:</span><span class="nv">No</span>
+<span class="o">-</span> <span class="nv">Num</span> <span class="nv">Buckets</span>           <span class="p">:-</span><span class="m">1</span>
+<span class="o">-</span> <span class="nv">Bucket</span> <span class="nv">Columns</span>        <span class="s-Atom">:</span><span class="p">[]</span>
+<span class="o">-</span> <span class="nv">Sort</span> <span class="nv">Columns</span>          <span class="s-Atom">:</span><span class="p">[]</span>
+    <span class="o">&gt;</span> <span class="s-Atom">field</span><span class="p">.</span><span class="s-Atom">delim</span>           <span class="s-Atom">:\u001E</span>
+    <span class="o">&gt;</span> <span class="s-Atom">serialization</span><span class="p">.</span><span class="s-Atom">forma</span>   <span class="s-Atom">:\u001E</span>
+
+<span class="s-Atom">###</span> <span class="s-Atom">存量数据</span>
+<span class="o">-</span> <span class="s-Atom">**近30日平均记录数**:</span>
+<span class="o">-</span> <span class="s-Atom">**文件统计**</span>
+<span class="o">&gt;</span> <span class="s-Atom">统计日期:</span> <span class="m">2017</span><span class="o">-</span><span class="m">10</span><span class="o">-</span><span class="m">30</span> <span class="m">19</span><span class="s-Atom">:</span><span class="m">25</span><span class="s-Atom">:</span><span class="m">17</span><span class="p">.</span><span class="m">484620401</span> <span class="nv">Monday</span>
+<span class="o">&gt;</span>  <span class="o">/</span><span class="s-Atom">warehouse</span><span class="o">/</span><span class="s-Atom">dw</span><span class="o">/</span><span class="s-Atom">sale</span><span class="o">/</span><span class="s-Atom">sale_city_catg_nielsen_wek__HIVE_DEFAULT_PARTITION__</span> <span class="s-Atom">----</span><span class="nv">TotalSize</span><span class="s-Atom">:</span> <span class="m">18</span><span class="p">.</span><span class="m">9392</span> <span class="nv">MB</span> <span class="p">,</span><span class="s-Atom">目录:</span> <span class="m">2</span>
+
+<span class="o">-</span> <span class="s-Atom">impala分区统计:</span>
+<span class="p">|</span> <span class="s-Atom">sdt</span>    <span class="p">|</span> <span class="s-Atom">#</span><span class="nv">Rows</span>  <span class="p">|</span> <span class="s-Atom">#</span><span class="nv">Files</span> <span class="p">|</span> <span class="nv">Size</span>    <span class="p">|</span> <span class="nv">Bytes</span> <span class="nv">Cached</span> <span class="p">|</span> <span class="nv">Cache</span> <span class="nv">Replication</span> <span class="p">|</span> <span class="nv">Format</span>  <span class="p">|</span> <span class="nv">Incremental</span> <span class="s-Atom">stats</span> <span class="p">|</span> <span class="nv">Location</span>                                                                                        <span class="p">|</span>
+<span class="p">|</span><span class="s-Atom">--------</span><span class="p">|</span><span class="s-Atom">--------</span><span class="p">|</span><span class="s-Atom">--------</span><span class="p">|</span><span class="s-Atom">---------</span><span class="p">|</span><span class="s-Atom">--------------</span><span class="p">|</span><span class="s-Atom">-------------------</span><span class="p">|</span><span class="s-Atom">---------</span><span class="p">|</span><span class="s-Atom">-------------------</span><span class="p">|</span><span class="s-Atom">-------------------------------------------------------------------------------------------------</span><span class="p">|</span>
+<span class="p">|</span> <span class="m">201705</span> <span class="p">|</span> <span class="m">249312</span> <span class="p">|</span> <span class="m">1</span>      <span class="p">|</span> <span class="m">9</span><span class="p">.</span><span class="m">47</span><span class="nv">MB</span>  <span class="p">|</span> <span class="nv">NOT</span> <span class="nv">CACHED</span>   <span class="p">|</span> <span class="nv">NOT</span> <span class="nv">CACHED</span>        <span class="p">|</span> <span class="nv">PARQUET</span> <span class="p">|</span> <span class="s-Atom">false</span>             <span class="p">|</span> <span class="nn">hdfs</span><span class="p">:</span><span class="o">//</span><span class="s-Atom">nameservice1</span><span class="o">/</span><span class="s-Atom">warehouse</span><span class="o">/</span><span class="s-Atom">dw</span><span class="o">/</span><span class="s-Atom">sale</span><span class="o">/</span><span class="s-Atom">sale_city_catg_nielsen_wek</span><span class="o">/</span><span class="s-Atom">sdt</span><span class="o">=</span><span class="m">201705</span>                     <span class="p">|</span>
+<span class="p">|</span> <span class="nv">Total</span>  <span class="p">|</span> <span class="o">-</span><span class="m">1</span>     <span class="p">|</span> <span class="m">2</span>      <span class="p">|</span> <span class="m">18</span><span class="p">.</span><span class="m">94</span><span class="nv">MB</span> <span class="p">|</span> <span class="m">0</span><span class="nv">B</span>           <span class="p">|</span>                   <span class="p">|</span>         <span class="p">|</span>                   <span class="p">|</span>                                                                                                 <span class="p">|</span>
+
+<span class="s-Atom">###</span> <span class="nv">ETL</span>
+
+<span class="o">-</span> <span class="s-Atom">主题:</span>
+<span class="o">-</span> <span class="s-Atom">源表:</span>
+<span class="o">&gt;</span>
+
+<span class="o">-</span> <span class="s-Atom">目标表：</span>
+<span class="o">&gt;</span> <span class="nv">DW</span><span class="p">.</span><span class="nv">SALE_CITY_CATG_NIELSEN_WEK</span>
+
+<span class="o">-</span> <span class="nv">CRON</span><span class="s-Atom">表达式:</span> <span class="err">`</span><span class="nv">NULL</span><span class="err">`</span>
+<span class="o">-</span> <span class="nv">KETTLE</span><span class="s-Atom">作业:</span> <span class="s-Atom">job_dw_sale_city_catg_nielsen_wek</span><span class="p">.</span><span class="s-Atom">kjb</span>
+<span class="o">-</span> <span class="nv">SVN</span><span class="s-Atom">文件:</span> <span class="s-Atom">/</span><span class="err">$</span><span class="p">{</span><span class="s-Atom">location</span><span class="p">}</span><span class="o">/</span><span class="s-Atom">job_dw_sale_city_catg_nielsen_wek</span><span class="p">.</span><span class="s-Atom">kjb</span>
+<span class="o">-</span> <span class="s-Atom">调度系统作业组:</span> <span class="nv">NIELSEN</span>
+
+<span class="s-Atom">###</span> <span class="s-Atom">数据口径</span>
+<span class="s-Atom">####</span> <span class="s-Atom">数据字典</span>
+<span class="nv">RP</span><span class="s-Atom">处理方式</span>
+<span class="o">-</span> <span class="nv">R</span><span class="s-Atom">:退货</span>
+<span class="o">-</span> <span class="nv">P</span><span class="s-Atom">:促销</span>
+
+<span class="s-Atom">####</span> <span class="s-Atom">常用统计</span>
+<span class="s-Atom">｀｀｀sql</span>
+<span class="s-Atom">hive&gt;--统计促销销售</span>
+<span class="s-Atom">hive</span><span class="o">&gt;</span><span class="nv">SELECT</span> <span class="nv">STATEMENT</span><span class="p">;</span>
+<span class="s-Atom">hive</span><span class="o">&gt;</span>
+<span class="s-Atom">｀｀｀</span>
+<span class="s-Atom">####</span> <span class="s-Atom">参照完整性约束</span>
+<span class="m">1</span><span class="p">.</span> <span class="nv">SHOP_ID</span> <span class="o">-</span> <span class="nv">DIM</span><span class="p">.</span><span class="nv">DIM_SHOP</span><span class="p">.</span><span class="nv">SHOP_ID</span> <span class="p">(</span><span class="nv">FK</span><span class="p">)</span>
+<span class="m">2</span><span class="p">.</span> <span class="nv">GOODSID</span> <span class="o">-</span> <span class="nv">DIM</span><span class="p">.</span><span class="nv">DIM_GOODS</span><span class="p">.</span><span class="nv">GOODSID</span> <span class="p">(</span><span class="nv">FK</span><span class="p">)</span>
+</pre></div>
+
+
+<p>如上，除数据口径章节需要人工维护外(或者从业务元数据库拉取),其他内容均可从Hive/Imapala中拉取. 为了保持更新文档, 脚本可每周运行一次,对于旧文档已维护的数据口径信息, 可更新合并到新的文档中.参考一下脚本.</p>
+<h2 id="merge">Merge新旧文档</h2>
+<p>合并Markdown文档</p>
+<div class="hlcode"><pre><span class="c1">#!/usr/bin/perl</span>
+<span class="c1"># Merge PDM Markdown Docs</span>
+<span class="c1">#  - Merge topics in Markdown files</span>
+<span class="c1"># liangwl © liang3p@gmail.com</span>
+<span class="c1"># 2017/12/11 16:02:46</span>
+<span class="k">use</span> <span class="n">strict</span><span class="p">;</span>
+<span class="k">use</span> <span class="n">warnings</span><span class="p">;</span>
+
+<span class="k">sub </span><span class="nf">markdown2Hash</span>
+<span class="p">{</span>
+  <span class="k">my</span> <span class="p">(</span><span class="nv">$oldFilePath</span><span class="p">)</span> <span class="o">=</span> <span class="nv">@_</span><span class="p">;</span>
+  <span class="k">my</span> <span class="p">(</span><span class="nv">$tableName</span><span class="p">,</span><span class="nv">$onLastTopic</span><span class="p">,</span><span class="nv">$baseTopicContent</span><span class="p">,</span><span class="nv">$lastTopicContent</span><span class="p">,</span><span class="nv">%oldHashMD</span><span class="p">);</span>
+  <span class="nb">open</span> <span class="n">READLINE</span><span class="p">,</span><span class="s">&#39;&lt;&#39;</span><span class="p">,</span><span class="nv">$oldFilePath</span> <span class="ow">or</span> <span class="nb">die</span> <span class="vg">$!</span><span class="p">;</span>
+  <span class="k">while</span><span class="p">(</span><span class="sr">&lt;READLINE&gt;</span><span class="p">){</span>
+    <span class="k">if</span><span class="p">(</span><span class="sr">/## DW/</span><span class="p">)</span>
+    <span class="p">{</span>
+      <span class="nb">chomp</span><span class="p">;</span>
+      <span class="k">if</span><span class="p">(</span><span class="nv">$tableName</span><span class="p">){</span>
+        <span class="k">my</span> <span class="nv">%pdm</span> <span class="o">=</span> <span class="p">(</span>
+          <span class="n">baseTopicContent</span> <span class="o">=&gt;</span> <span class="nv">$baseTopicContent</span><span class="p">,</span>
+          <span class="n">lastTopicContent</span> <span class="o">=&gt;</span> <span class="nv">$lastTopicContent</span>
+          <span class="p">);</span>
+        <span class="nv">$oldHashMD</span><span class="p">{</span><span class="nv">$tableName</span><span class="p">}</span> <span class="o">=</span> <span class="p">{</span><span class="nv">%pdm</span><span class="p">};</span>
+      <span class="p">}</span>
+      <span class="nv">$tableName</span> <span class="o">=</span> <span class="nv">$_</span><span class="p">;</span>
+      <span class="nv">$tableName</span> <span class="o">=~</span> <span class="sr">s/[^\._a-zA-Z]//g</span><span class="p">;</span>
+      <span class="p">(</span><span class="nv">$onLastTopic</span><span class="p">,</span><span class="nv">$baseTopicContent</span><span class="p">,</span><span class="nv">$lastTopicContent</span><span class="p">)</span> <span class="o">=</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="s">&quot;&quot;</span><span class="p">,</span><span class="s">&quot;&quot;</span><span class="p">);</span>
+    <span class="p">}</span>
+    <span class="k">else</span><span class="p">{</span>
+      <span class="k">if</span><span class="p">(</span><span class="sr">/### 数据口径/</span><span class="p">)</span>
+      <span class="p">{</span>
+        <span class="nv">$onLastTopic</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+      <span class="p">}</span>
+      <span class="k">if</span><span class="p">(</span><span class="nv">$onLastTopic</span><span class="p">){</span>
+        <span class="nv">$lastTopicContent</span><span class="o">.=</span><span class="nv">$_</span><span class="p">;</span>
+      <span class="p">}</span>
+      <span class="k">else</span><span class="p">{</span>
+        <span class="nv">$baseTopicContent</span><span class="o">.=</span><span class="nv">$_</span><span class="p">;</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+  <span class="c1">#last One</span>
+  <span class="k">my</span> <span class="nv">%pdm</span> <span class="o">=</span> <span class="p">(</span>
+      <span class="n">baseTopicContent</span> <span class="o">=&gt;</span> <span class="nv">$baseTopicContent</span><span class="p">,</span>
+      <span class="n">lastTopicContent</span> <span class="o">=&gt;</span> <span class="nv">$lastTopicContent</span>
+      <span class="p">);</span>
+  <span class="nv">$oldHashMD</span><span class="p">{</span><span class="nv">$tableName</span><span class="p">}</span> <span class="o">=</span> <span class="p">{</span><span class="nv">%pdm</span><span class="p">};</span>
+  <span class="nb">close</span><span class="p">(</span><span class="n">READLINE</span><span class="p">);</span>
+  <span class="k">return</span> <span class="nv">%oldHashMD</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">sub </span><span class="nf">newFiles2Hash</span>
+<span class="p">{</span>
+  <span class="k">my</span> <span class="p">(</span><span class="nv">$newFilePath</span><span class="p">,</span><span class="nv">%hashMarkdown</span><span class="p">)</span> <span class="o">=</span> <span class="nv">@_</span><span class="p">;</span>
+  <span class="nb">open</span> <span class="n">READLINE</span><span class="p">,</span><span class="s">&#39;&lt;&#39;</span><span class="p">,</span><span class="nv">$newFilePath</span> <span class="ow">or</span> <span class="nb">die</span> <span class="vg">$!</span><span class="p">;</span>
+  <span class="k">my</span> <span class="p">(</span><span class="nv">$content</span><span class="p">,</span><span class="nv">$tableName</span><span class="p">);</span>
+  <span class="k">while</span><span class="p">(</span><span class="sr">&lt;READLINE&gt;</span><span class="p">){</span>
+    <span class="nv">$content</span><span class="o">.=</span><span class="nv">$_</span><span class="p">;</span>
+    <span class="k">if</span><span class="p">(</span><span class="sr">/## DW/</span><span class="p">)</span>  <span class="c1">#get Table Name</span>
+    <span class="p">{</span>
+      <span class="nb">chomp</span><span class="p">;</span>
+      <span class="nv">$tableName</span> <span class="o">=</span> <span class="nv">$_</span><span class="p">;</span>
+      <span class="nv">$tableName</span> <span class="o">=~</span> <span class="sr">s/[^\._a-zA-Z]//g</span><span class="p">;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+  <span class="k">my</span> <span class="p">(</span><span class="nv">$baseTopicContent</span><span class="p">,</span><span class="nv">$lastTopicContent</span><span class="p">)</span> <span class="o">=</span> <span class="nb">split</span><span class="p">(</span><span class="s">&#39;### 数据口径&#39;</span><span class="p">,</span><span class="nv">$content</span><span class="p">);</span>
+  <span class="k">my</span> <span class="nv">%pdm</span> <span class="o">=</span> <span class="p">(</span>
+      <span class="n">baseTopicContent</span> <span class="o">=&gt;</span> <span class="nv">$baseTopicContent</span><span class="p">,</span>
+      <span class="n">lastTopicContent</span> <span class="o">=&gt;</span> <span class="nv">$lastTopicContent</span>
+      <span class="p">);</span>
+  <span class="nv">$hashMarkdown</span><span class="p">{</span><span class="nv">$tableName</span><span class="p">}</span> <span class="o">=</span> <span class="p">{</span><span class="nv">%pdm</span><span class="p">};</span>
+  <span class="k">return</span> <span class="nv">%hashMarkdown</span>
+<span class="p">}</span>
+
+<span class="k">sub </span><span class="nf">mergeTopic</span>
+<span class="p">{</span>
+  <span class="k">my</span> <span class="nv">%oldH</span> <span class="o">=</span> <span class="nv">%</span><span class="p">{</span><span class="nb">shift</span><span class="p">()};</span>
+  <span class="k">my</span> <span class="nv">%newH</span> <span class="o">=</span> <span class="nv">%</span><span class="p">{</span><span class="nb">shift</span><span class="p">()};</span>
+
+  <span class="k">my</span> <span class="nv">%mergeHashMarkdown</span><span class="p">;</span>
+  <span class="k">foreach</span><span class="p">(</span><span class="nb">sort</span> <span class="nb">keys</span> <span class="nv">%newH</span><span class="p">){</span>
+    <span class="nb">chomp</span><span class="p">;</span>
+    <span class="k">my</span> <span class="nv">$key</span> <span class="o">=</span> <span class="nv">$_</span><span class="p">;</span>
+    <span class="k">print</span> <span class="s">&quot;Merge key - $key\n&quot;</span><span class="p">;</span>
+    <span class="k">if</span><span class="p">(</span><span class="nb">exists</span> <span class="nv">$oldH</span><span class="p">{</span><span class="nv">$key</span><span class="p">})</span>
+    <span class="p">{</span> <span class="c1">#print &quot;Key found - $_\n&quot;;</span>
+      <span class="k">my</span> <span class="nv">%pdm</span> <span class="o">=</span> <span class="p">(</span>
+          <span class="n">baseTopicContent</span> <span class="o">=&gt;</span> <span class="nv">$</span><span class="p">{</span><span class="n">newH</span><span class="p">}{</span><span class="nv">$_</span><span class="p">}{</span><span class="n">baseTopicContent</span><span class="p">},</span>
+          <span class="n">lastTopicContent</span> <span class="o">=&gt;</span> <span class="nv">$</span><span class="p">{</span><span class="n">oldH</span><span class="p">}{</span><span class="nv">$_</span><span class="p">}{</span><span class="n">lastTopicContent</span><span class="p">}</span>
+          <span class="p">);</span>
+      <span class="nv">$mergeHashMarkdown</span><span class="p">{</span><span class="nv">$_</span><span class="p">}</span> <span class="o">=</span> <span class="p">{</span><span class="nv">%pdm</span><span class="p">};</span>
+    <span class="p">}</span>
+    <span class="k">else</span><span class="p">{</span> <span class="c1">#print &quot;NOT found - $_\n&quot;;</span>
+      <span class="nv">$mergeHashMarkdown</span><span class="p">{</span><span class="nv">$_</span><span class="p">}</span> <span class="o">=</span> <span class="p">{</span><span class="nv">%</span><span class="p">{</span><span class="nv">$newH</span><span class="p">{</span><span class="nv">$_</span><span class="p">}}};</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+  <span class="k">return</span> <span class="nv">%mergeHashMarkdown</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">sub </span><span class="nf">main</span>
+<span class="p">{</span>
+  <span class="k">my</span> <span class="nv">%newHash</span><span class="p">;</span>
+  <span class="k">foreach</span><span class="p">(</span><span class="sb">`ls ./../doc/dw*.md`</span><span class="p">){</span>
+    <span class="nb">chomp</span><span class="p">;</span>
+    <span class="nv">%newHash</span> <span class="o">=</span> <span class="n">newFiles2Hash</span><span class="p">(</span><span class="nv">$_</span><span class="p">,</span><span class="nv">%newHash</span><span class="p">);</span>
+  <span class="p">}</span>
+  <span class="k">my</span> <span class="nv">$oldfile</span> <span class="o">=</span> <span class="sb">`ls -r ./../doc/pdm*.md | head -n 1 | tr -d &quot;\n&quot;`</span><span class="p">;</span>
+  <span class="k">my</span> <span class="nv">%oldHash</span> <span class="o">=</span> <span class="n">markdown2Hash</span><span class="p">(</span><span class="nv">$oldfile</span><span class="p">);</span>
+
+  <span class="k">my</span> <span class="nv">%mergeHash</span> <span class="o">=</span> <span class="n">mergeTopic</span><span class="p">(</span><span class="o">\</span><span class="nv">%oldHash</span><span class="p">,</span> <span class="o">\</span><span class="nv">%newHash</span><span class="p">);</span>
+  <span class="k">my</span> <span class="nv">$dt</span> <span class="o">=</span> <span class="sb">`date +&#39;%Y%m%d-%H%M%S&#39; | tr -d &quot;\n&quot;`</span><span class="p">;</span>
+  <span class="k">my</span> <span class="nv">$newPDM</span> <span class="o">=</span> <span class="s">&quot;./../doc/pdm_${dt}.md&quot;</span><span class="p">;</span>
+
+  <span class="nb">open</span> <span class="k">my</span> <span class="nv">$write_file</span> <span class="p">,</span><span class="s">&#39;&gt;&#39;</span><span class="p">,</span><span class="nv">$newPDM</span> <span class="ow">or</span> <span class="nb">die</span> <span class="vg">$!</span><span class="p">;</span>
+  <span class="nb">open</span> <span class="n">READLINE</span><span class="p">,</span><span class="s">&#39;&lt;&#39;</span><span class="p">,</span><span class="nv">$oldfile</span> <span class="ow">or</span> <span class="nb">die</span> <span class="vg">$!</span><span class="p">;</span>
+  <span class="k">while</span><span class="p">(</span><span class="sr">&lt;READLINE&gt;</span><span class="p">){</span>
+    <span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="sr">/## DW/</span><span class="p">)</span>
+    <span class="p">{</span>
+      <span class="k">print</span> <span class="nv">$write_file</span> <span class="nv">$_</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">else</span><span class="p">{</span>
+      <span class="k">last</span><span class="p">;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+  <span class="nb">close</span> <span class="n">READLINE</span><span class="p">;</span>
+  <span class="k">foreach</span><span class="p">(</span><span class="nb">sort</span> <span class="nb">keys</span> <span class="nv">%mergeHash</span><span class="p">){</span>
+    <span class="k">print</span> <span class="nv">$write_file</span> <span class="nv">$mergeHash</span><span class="p">{</span><span class="nv">$_</span><span class="p">}{</span><span class="n">baseTopicContent</span><span class="p">};</span>
+    <span class="k">print</span> <span class="nv">$write_file</span> <span class="nv">$mergeHash</span><span class="p">{</span><span class="nv">$_</span><span class="p">}{</span><span class="n">lastTopicContent</span><span class="p">};</span>
+    <span class="k">print</span> <span class="nv">$write_file</span> <span class="s">&quot;\n\n&quot;</span><span class="p">;</span>
+  <span class="p">}</span>
+  <span class="nb">close</span> <span class="nv">$write_file</span><span class="p">;</span>
+  <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">my</span> <span class="nv">$rc</span> <span class="o">=</span> <span class="n">main</span><span class="p">();</span>
+<span class="nb">exit</span><span class="p">(</span><span class="nv">$rc</span><span class="p">);</span>
+</pre></div>
+  <div class="relation">
+    <h2>Related</h2>
+    <ul>
+    
+    <li><a href="/shell/sed脚本批量修改xml文档——kettle job文件.html">sed脚本批量修改xml文档——kettle job文件</a></li>
+    
+    </ul>
+  </div>
+    </div>
+    <div id="footer">
+      <span>
+        <p>Copyright © 2018 instore.top.
+        Powered by <a href="http://simiki.org/" target="_blank">Simiki</a>.</p>
+        <p>Site Generated 2018-03-10 15:32:21</p>
+      </span>
+    </div>
+
+    
+    
+  </body>
+</html>
