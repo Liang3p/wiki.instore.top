@@ -41,7 +41,7 @@
 3. 作业下线但SVN仓库未删除该文件,旧的作业仍然会被解析,还需要关联作业信息后期筛除;</p>
 <p>阅读Hive源码可知,Hive使用Antlr解析hql得到AST,再生成query plan. 因此可以通过AST获取该查询中的数据流. Hive还提供了血缘分析的工具类<code>LineageInfo.java</code>, 但是无法解析<code>CREATE TABLE AS SELECT</code> 结构的血缘, 因此考虑重构实现。<br />
 本文是ANTLR4实践的第一篇.</p>
-<p>参考文章!(使用Antlr4实现计算器[Python])[http://www.opstool.com/article/336),实现了基于ANTLR4的计算器功能.</p>
+<p>参考文章<a href="http://www.opstool.com/article/336">使用Antlr4实现计算器[Python]</a>,实现了基于ANTLR4的计算器功能.</p>
 <h2 id="_2">语法文件</h2>
 <div class="hlcode"><pre><span class="n">grammar</span> <span class="n">Calculator</span><span class="p">;</span>
 
@@ -230,7 +230,7 @@ Warning: TestRig moved to org.antlr.v4.gui.TestRig; calling automatically
       <span>
         <p>Copyright © 2018 instore.top.
         Powered by <a href="http://simiki.org/" target="_blank">Simiki</a>.</p>
-        <p>Site Generated 2018-04-03 18:46:53</p>
+        <p>Site Generated 2018-04-03 18:52:40</p>
       </span>
     </div>
 
