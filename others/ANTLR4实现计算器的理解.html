@@ -1,0 +1,240 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <link rel="Stylesheet" type="text/css" href="/static/css/style.css">
+    <link rel="Stylesheet" type="text/css" href="/static/css/tango.css">
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="alternate" type="application/atom+xml" href="atom.xml" title="Atom feed">
+    <title>ANTLR4实现计算器的理解 - Wiki Pages</title>
+    <meta name="keywords" content="bigdata hadoop hive datawarehouse spark ML"/>
+    <meta name="description" content="wiki page"/>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  </head>
+
+  <body>
+    <div id="container">
+      
+<div id="header">
+  <div class="post-nav"><a href="/">Home</a>&nbsp;&#187;&nbsp;<a href="/#others">others</a>&nbsp;&#187;&nbsp;ANTLR4实现计算器的理解
+    <span class="updated">Page Updated&nbsp;
+      2018-04-03 17:40:54
+    </span></div>
+</div>
+<div class="clearfix"></div>
+
+<div class="page_title">ANTLR4实现计算器的理解</div>
+
+  <h2 id="_1">需求描述</h2>
+<p>Hadoop生态圈目前尚无一款成熟且开源的血缘分析工具,自研是唯一出路. 项目使用某合作厂商的调度平台+Kettle Job封装hql语句实现离线作业的部署调度.</p>
+<div class="toc"><span class="toctitle">Table of Contents</span><ul>
+<li><a href="#_1">需求描述</a></li>
+<li><a href="#_2">语法文件</a></li>
+<li><a href="#_3">生成解析类,实现计算功能</a></li>
+<li><a href="#_4">测试</a></li>
+<li><a href="#ast">理解AST到计算功能的实现</a></li>
+</ul>
+</div>
+<p>前期为了快速实现血缘分析,用脚本解析Kettle文件(XML),抽取出内嵌的SQL语句,再使用正则表达式解析数据血缘. 尽管实现了解析, 但仍存在以下问题:<br />
+1. 因SQL Enterty在KJB/KTR的XML中位置较为固定,部分环境变量和节点位置采用了部分硬编码的实现,不便维护;<br />
+2. Kettle文件内嵌内容较为灵活,递归解析和脚本解析都比较麻烦,容易出错;<br />
+3. 作业下线但SVN仓库未删除该文件,旧的作业仍然会被解析,还需要关联作业信息后期筛除;</p>
+<p>阅读Hive源码可知,Hive使用Antlr解析hql得到AST,再生成query plan. 因此可以通过AST获取该查询中的数据流. Hive还提供了血缘分析的工具类<code>LineageInfo.java</code>, 但是无法解析<code>CREATE TABLE AS SELECT</code> 结构的血缘, 因此考虑重构实现。<br />
+本文是ANTLR4实践的第一篇.</p>
+<p>参考文章!(使用Antlr4实现计算器[Python])[http://www.opstool.com/article/336),实现了基于ANTLR4的计算器功能.</p>
+<h2 id="_2">语法文件</h2>
+<div class="hlcode"><pre><span class="n">grammar</span> <span class="n">Calculator</span><span class="p">;</span>
+
+<span class="n">expr</span> <span class="o">:</span> <span class="n">expr</span> <span class="n">op</span><span class="o">=</span><span class="p">(</span><span class="sc">&#39;*&#39;</span><span class="o">|</span><span class="sc">&#39;/&#39;</span><span class="p">)</span> <span class="n">expr</span>     <span class="err">#</span> <span class="n">MULDiv</span>
+     <span class="o">|</span> <span class="n">expr</span> <span class="n">op</span><span class="o">=</span><span class="p">(</span><span class="sc">&#39;+&#39;</span><span class="o">|</span><span class="sc">&#39;-&#39;</span><span class="p">)</span> <span class="n">expr</span>     <span class="err">#</span> <span class="n">AddSub</span>
+     <span class="o">|</span> <span class="n">INT</span>                        <span class="err">#</span> <span class="kt">int</span>
+     <span class="o">|</span> <span class="sc">&#39;(&#39;</span> <span class="n">expr</span> <span class="sc">&#39;)&#39;</span>               <span class="err">#</span> <span class="n">parens</span>
+     <span class="o">|</span> <span class="n">op</span><span class="o">=</span><span class="p">(</span><span class="sc">&#39;-&#39;</span><span class="o">|</span><span class="sc">&#39;+&#39;</span><span class="p">)</span> <span class="n">INT</span>           <span class="err">#</span> <span class="n">prehead1</span>
+     <span class="o">|</span> <span class="n">op</span><span class="o">=</span><span class="p">(</span><span class="sc">&#39;-&#39;</span><span class="o">|</span><span class="sc">&#39;+&#39;</span><span class="p">)</span> <span class="sc">&#39;(&#39;</span> <span class="n">expr</span> <span class="sc">&#39;)&#39;</span>  <span class="err">#</span> <span class="n">prehead2</span>
+     <span class="p">;</span>
+
+<span class="n">INT</span>  <span class="o">:</span> <span class="p">[</span><span class="mi">0</span><span class="o">-</span><span class="mi">9</span><span class="p">]</span><span class="o">+</span><span class="p">;</span>
+<span class="n">MUL</span>  <span class="o">:</span> <span class="sc">&#39;*&#39;</span> <span class="p">;</span>
+<span class="n">DIV</span>  <span class="o">:</span> <span class="sc">&#39;/&#39;</span> <span class="p">;</span>
+<span class="n">ADD</span>  <span class="o">:</span> <span class="sc">&#39;+&#39;</span> <span class="p">;</span>
+<span class="n">SUB</span>  <span class="o">:</span> <span class="sc">&#39;-&#39;</span> <span class="p">;</span>
+
+<span class="n">WS</span>   <span class="o">:</span> <span class="p">[</span> <span class="err">\</span><span class="n">t</span><span class="err">\</span><span class="n">r</span><span class="err">\</span><span class="n">n</span><span class="p">]</span><span class="o">+</span> <span class="o">-&gt;</span> <span class="n">skip</span><span class="p">;</span>
+</pre></div>
+
+
+<h2 id="_3">生成解析类,实现计算功能</h2>
+<p>使用命令<code>antlr4 -visitor -Dlanguage=Python3 Calculator.g4</code>生成解析类, 文件夹中新生成了如下文件：</p>
+<blockquote>
+<p>Calculator.g4<br />
+Calculator.interp<br />
+Calculator.tokens<br />
+CalculatorLexer.interp<br />
+CalculatorLexer.py<br />
+CalculatorLexer.tokens<br />
+CalculatorListener.py<br />
+CalculatorParser.py<br />
+CalculatorVisitor.py</p>
+</blockquote>
+<p>修改 CalculatorVisitor.py文件</p>
+<div class="hlcode"><pre><span class="c"># Generated from Calculator.g4 by ANTLR 4.7.1</span>
+<span class="kn">from</span> <span class="nn">antlr4</span> <span class="kn">import</span> <span class="o">*</span>
+<span class="k">if</span> <span class="n">__name__</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span> <span class="ow">and</span> <span class="s">&quot;.&quot;</span> <span class="ow">in</span> <span class="n">__name__</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">.CalculatorParser</span> <span class="kn">import</span> <span class="n">CalculatorParser</span>
+    <span class="kn">from</span> <span class="nn">.CalculatorLexer</span> <span class="kn">import</span> <span class="n">CalculatorLexer</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">CalculatorParser</span> <span class="kn">import</span> <span class="n">CalculatorParser</span>
+    <span class="kn">from</span> <span class="nn">CalculatorLexer</span> <span class="kn">import</span> <span class="n">CalculatorLexer</span>
+
+<span class="c"># This class defines a complete generic visitor for a parse tree produced by CalculatorParser.</span>
+
+<span class="k">class</span> <span class="nc">CalculatorVisitor</span><span class="p">(</span><span class="n">ParseTreeVisitor</span><span class="p">):</span>
+
+    <span class="c"># Visit a parse tree produced by CalculatorParser#parens.</span>
+    <span class="k">def</span> <span class="nf">visitParens</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span><span class="n">CalculatorParser</span><span class="o">.</span><span class="n">ParensContext</span><span class="p">):</span>
+        <span class="c">#return self.visitChildren(ctx)</span>
+        <span class="c"># | &#39;(&#39; expr &#39;)&#39;            # parens</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">expr</span><span class="p">())</span>
+
+
+    <span class="c"># Visit a parse tree produced by CalculatorParser#prehead1.</span>
+    <span class="k">def</span> <span class="nf">visitPrehead1</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span><span class="n">CalculatorParser</span><span class="o">.</span><span class="n">Prehead1Context</span><span class="p">):</span>
+        <span class="c"># | op=(&#39;-&#39;|&#39;+&#39;) INT       # prehead1</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">INT</span><span class="p">()</span><span class="o">.</span><span class="n">getText</span><span class="p">())</span>
+        <span class="k">if</span> <span class="n">ctx</span><span class="o">.</span><span class="n">op</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">CalculatorLexer</span><span class="o">.</span><span class="n">ADD</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">value</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="o">-</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+
+
+    <span class="c"># Visit a parse tree produced by CalculatorParser#prehead2.</span>
+    <span class="k">def</span> <span class="nf">visitPrehead2</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span><span class="n">CalculatorParser</span><span class="o">.</span><span class="n">Prehead2Context</span><span class="p">):</span>
+        <span class="c"># | op=(&#39;-&#39;|&#39;+&#39;) &#39;(&#39; expr &#39;)&#39;      # prehead2</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">expr</span><span class="p">())</span>
+        <span class="k">if</span> <span class="n">ctx</span><span class="o">.</span><span class="n">op</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">CalculatorLexer</span><span class="o">.</span><span class="n">ADD</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">expr</span><span class="p">())</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">expr</span><span class="p">())</span>
+
+
+    <span class="c"># Visit a parse tree produced by CalculatorParser#AddSub.</span>
+    <span class="k">def</span> <span class="nf">visitAddSub</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span><span class="n">CalculatorParser</span><span class="o">.</span><span class="n">AddSubContext</span><span class="p">):</span>
+    <span class="c"># | expr op=(&#39;+&#39;|&#39;-&#39;) expr  # AddSub</span>
+        <span class="n">left</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">expr</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+        <span class="n">right</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">expr</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">ctx</span><span class="o">.</span><span class="n">op</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">CalculatorLexer</span><span class="o">.</span><span class="n">ADD</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">left</span> <span class="o">+</span> <span class="n">right</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">left</span> <span class="o">-</span> <span class="n">right</span>
+
+
+    <span class="c"># Visit a parse tree produced by CalculatorParser#MULDiv.</span>
+    <span class="k">def</span> <span class="nf">visitMULDiv</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span><span class="n">CalculatorParser</span><span class="o">.</span><span class="n">MULDivContext</span><span class="p">):</span>
+        <span class="c"># | expr op=(&#39;*&#39;|&#39;/&#39;) expr  # MULDiv</span>
+        <span class="n">left</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">expr</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+        <span class="n">right</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">expr</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">ctx</span><span class="o">.</span><span class="n">op</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">CalculatorLexer</span><span class="o">.</span><span class="n">MUL</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">left</span> <span class="o">*</span> <span class="n">right</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">left</span> <span class="o">/</span> <span class="n">right</span>
+
+
+    <span class="c"># Visit a parse tree produced by CalculatorParser#int.</span>
+    <span class="k">def</span> <span class="nf">visitInt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span><span class="n">CalculatorParser</span><span class="o">.</span><span class="n">IntContext</span><span class="p">):</span>
+        <span class="c">#return self.visitChildren(ctx)</span>
+        <span class="c"># | INT                     # int</span>
+        <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">getText</span><span class="p">())</span>
+
+
+
+<span class="k">del</span> <span class="n">CalculatorParser</span>
+</pre></div>
+
+
+<h2 id="_4">测试</h2>
+<div class="hlcode"><pre><span class="kn">import</span> <span class="nn">sys</span>
+
+<span class="kn">from</span> <span class="nn">antlr4</span> <span class="kn">import</span> <span class="o">*</span>
+<span class="kn">from</span> <span class="nn">CalculatorParser</span> <span class="kn">import</span> <span class="n">CalculatorParser</span>
+<span class="kn">from</span> <span class="nn">CalculatorLexer</span> <span class="kn">import</span> <span class="n">CalculatorLexer</span>
+<span class="kn">from</span> <span class="nn">CalculatorListener</span> <span class="kn">import</span> <span class="n">CalculatorListener</span>
+<span class="kn">from</span> <span class="nn">CalculatorVisitor</span> <span class="kn">import</span> <span class="n">CalculatorVisitor</span>
+
+
+<span class="k">def</span> <span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">):</span>
+    <span class="nb">input</span> <span class="o">=</span> <span class="n">FileStream</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+    <span class="n">lexer</span> <span class="o">=</span> <span class="n">CalculatorLexer</span><span class="p">(</span><span class="nb">input</span><span class="p">)</span>
+    <span class="n">stream</span> <span class="o">=</span> <span class="n">CommonTokenStream</span><span class="p">(</span><span class="n">lexer</span><span class="p">)</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">CalculatorParser</span><span class="p">(</span><span class="n">stream</span><span class="p">)</span>
+    <span class="n">tree</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">expr</span><span class="p">()</span>
+    <span class="n">v</span> <span class="o">=</span> <span class="n">CalculatorVisitor</span><span class="p">()</span>
+    <span class="k">print</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">tree</span><span class="p">))</span>
+
+<span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">)</span>
+</pre></div>
+
+
+<p>参考原文,我们对表达式<code>7 + 3 * (10 / (12 / (3 + 2) - 1))</code>求值:</p>
+<div class="hlcode"><pre>D:<span class="se">\D</span>ev<span class="se">\A</span>ST<span class="se">\c</span>alculator&gt;python test.py cal.txt
+28.42857142857143
+</pre></div>
+
+
+<h2 id="ast">理解AST到计算功能的实现</h2>
+<p>ANTLR将表达式解析成抽象语法树(AST),<code>CalculatorVisitor</code>类实现运算符的计算. 表面上看来, 我们没有考虑符号的优先级. 实际上, 通过构造AST, 我们只需要后序遍历整棵树就可以得到该原始表达式(中缀表达式)的逆波兰表达式(后缀表达式),而前序遍历可得到原始表达式的波兰表达式(前缀表达式).</p>
+<p>例如, 我们尝试将表达式映射到二叉树：<br />
+<img alt="" src="http://ww1.sinaimg.cn/large/a92183f7gy1fpznqjmnquj20ar0eedfv.jpg" /></p>
+<p>我们可以通过ANTLR的可视化功能得到验证。<br />
+因gui依赖jvm实现,所以我们需要先生成相应java类</p>
+<div class="hlcode"><pre>mkdir java
+cp Calculator.g4 ./java/Calculator.g4
+antlr4 Calculator.g4
+</pre></div>
+
+
+<p>查看构造的AST:</p>
+<div class="hlcode"><pre>java org.antlr.v4.runtime.misc.TestRig Calculator expr -tree
+7 + 3 * <span class="o">(</span>10 / <span class="o">(</span>12 / <span class="o">(</span>3 + 2<span class="o">)</span> - 1<span class="o">))</span>
+^Z
+<span class="o">(</span>expr <span class="o">(</span>expr 7<span class="o">)</span> + <span class="o">(</span>expr <span class="o">(</span>expr 3<span class="o">)</span> * <span class="o">(</span>expr <span class="o">(</span> <span class="o">(</span>expr <span class="o">(</span>expr 10<span class="o">)</span> / <span class="o">(</span>expr <span class="o">(</span> <span class="o">(</span>expr <span class="o">(</span>expr <span class="o">(</span>expr 12<span class="o">)</span> / <span class="o">(</span>expr <span class="o">(</span> <span class="o">(</span>expr <span class="o">(</span>expr 3<span class="o">)</span> + <span class="o">(</span>expr 2<span class="o">))</span> <span class="o">)))</span> - <span class="o">(</span>expr 1<span class="o">))</span> <span class="o">)))</span> <span class="o">))))</span>
+</pre></div>
+
+
+<p>以上代码中这两行为手动输入,<code>^Z</code>是<code>Ctrl+Z</code>,用以终止输入(EOF)：</p>
+<div class="hlcode"><pre>7 + 3 * <span class="o">(</span>10 / <span class="o">(</span>12 / <span class="o">(</span>3 + 2<span class="o">)</span> - 1<span class="o">))</span>
+^Z
+</pre></div>
+
+
+<p>可视化的结构：</p>
+<div class="hlcode"><pre>java org.antlr.v4.runtime.misc.TestRig Calculator expr -gui
+Warning: TestRig moved to org.antlr.v4.gui.TestRig; calling automatically
+7 + 3 * <span class="o">(</span>10 / <span class="o">(</span>12 / <span class="o">(</span>3 + 2<span class="o">)</span> - 1<span class="o">))</span>
+^Z
+</pre></div>
+
+
+<p><img alt="" src="http://ww1.sinaimg.cn/large/a92183f7gy1fpzniq6lijj20hs0iwgmi.jpg" /></p>
+<p>如图, ANTLR解析得到的树结构和上图分析完全一致.</p>
+  <div class="relation">
+    <h2>Related</h2>
+    <ul>
+    
+    <li><a href="/spark/An_easy_way_to_operate_PySpark.RDD_without_memorizing_API-DOCs.html">An easy way to operate RDD without memorizing API-DOCs</a></li>
+    
+    </ul>
+  </div>
+    </div>
+    <div id="footer">
+      <span>
+        <p>Copyright © 2018 instore.top.
+        Powered by <a href="http://simiki.org/" target="_blank">Simiki</a>.</p>
+        <p>Site Generated 2018-04-03 18:46:53</p>
+      </span>
+    </div>
+
+    
+    
+  </body>
+</html>
